@@ -41,8 +41,8 @@ This tool extracts **structured product data** (title, price, availability) from
 # ------------------- Sidebar Options -------------------
 with st.sidebar:
     st.header("⚙️ Options")
-    use_live = st.checkbox("Enable live fetch (requests)", value=False)
-    use_llm_inference = st.checkbox("Use Gemini AI for selector inference", value=False)
+    use_live = st.checkbox("Enable live fetch (requests)", value=True)
+    use_llm_inference = st.checkbox("Use Gemini AI for selector inference", value=True)
     
     # Show warning if Gemini is enabled but no API key
     if use_llm_inference and not GEMINI_API_KEY:
@@ -58,8 +58,8 @@ with st.sidebar:
 # ------------------- Input Section -------------------
 st.subheader("🧾 Input URLs or Upload Snapshots")
 urls_text = st.text_area(
-    "Enter one or more URLs (one per line):",
-    placeholder="https://example.com/product1\nhttps://example.com/product2",
+    "Enter one or more URLs (comma-separated):",
+    placeholder="https://example.com/product1, https://example.com/product2, https://example.com/product3",
     height=120
 )
 
@@ -95,12 +95,19 @@ if run:
     st.info("Running extraction... please wait.")
     inputs = []
 
-    # Collect URLs
+    # Collect URLs (comma-separated)
     if urls_text.strip():
-        for line in urls_text.splitlines():
-            line = line.strip()
-            if line:
-                inputs.append(("url", line))
+        # Split by comma and also handle newlines for flexibility
+        url_list = []
+        for part in urls_text.split(','):
+            # Also split by newlines in case user mixes formats
+            for line in part.splitlines():
+                line = line.strip()
+                if line:
+                    url_list.append(line)
+        
+        for url in url_list:
+            inputs.append(("url", url))
 
     # Collect uploaded files
     if uploaded_files:
