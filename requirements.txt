@@ -6,4 +6,4 @@ lxml
 sqlalchemy
 tqdm
 python-dotenv
-google-generativeai
+google-genai

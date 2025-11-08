@@ -43,6 +43,11 @@ with st.sidebar:
     st.header("⚙️ Options")
     use_live = st.checkbox("Enable live fetch (requests)", value=False)
     use_llm_inference = st.checkbox("Use Gemini AI for selector inference", value=False)
+    
+    # Show warning if Gemini is enabled but no API key
+    if use_llm_inference and not GEMINI_API_KEY:
+        st.warning("⚠️ Gemini API key not found! Add GEMINI_API_KEY to your .env file")
+    
     db_save = st.checkbox("Save snapshots to SQLite", value=True)
     show_raw_html = st.checkbox("Show raw HTML (for debugging)", value=False)
 
@@ -142,15 +147,15 @@ if run:
             # --------------- Optional LLM Inference ---------------
             mapping = mapping_input.copy()
             if use_llm_inference and GEMINI_API_KEY:
-                st.info(f"🤖 Using Gemini AI to infer selectors for {src} ...")
-                inferred = llm_infer_selectors(html, GEMINI_API_KEY)
-                if inferred:
-                    for key in ["title", "price", "availability"]:
-                        if inferred.get(key):
-                            mapping[key] = inferred[key]
-                    st.success(f"Gemini suggested selectors: {inferred}")
-                else:
-                    st.warning("Gemini could not infer selectors. Falling back to heuristics.")
+                with st.spinner(f"🤖 Using Gemini AI to infer selectors for {src}..."):
+                    inferred = llm_infer_selectors(html, GEMINI_API_KEY)
+                    if inferred:
+                        for key in ["title", "price", "availability"]:
+                            if inferred.get(key) and not mapping.get(key):
+                                mapping[key] = inferred[key]
+                        st.success(f"✅ Gemini suggested: {inferred}")
+                    else:
+                        st.warning("⚠️ Gemini could not infer selectors. Using heuristics.")
 
             # --------------- Extract Data ---------------
             try:
@@ -158,7 +163,7 @@ if run:
                 extracted["_source"] = src
                 results.append(extracted)
             except Exception as e:
-                st.error(f"Extraction error for {src}: {e}")
+                st.error(f"❌ Extraction error for {src}: {e}")
 
         # --------------- Display Results ---------------
         if results:

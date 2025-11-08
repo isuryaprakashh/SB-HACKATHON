@@ -13,7 +13,6 @@ import os
 # Load environment variables (Gemini API key, etc.)
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL")
 
 # ---------- Regex patterns ----------
 CURRENCY_RE = re.compile(r'(\$|€|£|\u20B9)\s?[\d{1,3},]*\d+(\.\d+)?')
@@ -167,39 +166,22 @@ def extract_from_html(html: str, mapping: Dict[str, str] = {}) -> Dict[str, Any]
 
     return normalize_fields(selected)
 
-# ---------- Gemini-based Selector Inference ----------
-def _extract_text_from_response(response) -> str:
-    """Best effort extraction of text across google-generativeai response variants."""
-    text = getattr(response, "text", None)
-    if text:
-        return text.strip()
-
-    # Newer SDKs expose candidates/parts
-    parts = []
-    for candidate in getattr(response, "candidates", []) or []:
-        content = getattr(candidate, "content", None)
-        if not content:
-            continue
-        for part in getattr(content, "parts", []) or []:
-            part_text = getattr(part, "text", None)
-            if part_text:
-                parts.append(part_text)
-    joined = "".join(parts).strip()
-    return joined
-
-
+# ---------- Gemini-based Selector Inference (NEW SDK) ----------
 def llm_infer_selectors(html: str, api_key: str):
     """
     Use Google Gemini to infer CSS selectors for product title, price, and availability.
     Returns a dict like {"title": "h1.product-title", "price": "span.price", "availability": "#stock"}
     """
-    import google.generativeai as genai
-
     if not api_key:
         print("Gemini API key not found in environment (.env).")
         return {}
 
-    genai.configure(api_key=api_key)
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        print("Error: google-genai package not installed. Run: pip install google-genai")
+        return {}
 
     prompt = (
         "You are an expert HTML analyst. Given the following HTML, identify the correct CSS selectors "
@@ -209,51 +191,59 @@ def llm_infer_selectors(html: str, api_key: str):
         f"HTML:\n{html[:6000]}"
     )
 
-    # Prefer model specified in env, fall back to a list of known-public models.
-    preferred_models = [GEMINI_MODEL] if GEMINI_MODEL else []
-    preferred_models.extend([
-        "gemini-1.5-flash-latest",
+    # List of models to try (newest first)
+    models_to_try = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
         "gemini-1.5-flash",
-        "gemini-1.5-flash-001",
-        "gemini-1.0-pro",
-        "gemini-pro"
-    ])
+        "gemini-1.5-pro"
+    ]
 
     errors = {}
-
-    for model_name in preferred_models:
-        if not model_name:
-            continue
+    
+    for model_name in models_to_try:
         try:
-            model = genai.GenerativeModel(model_name=model_name)
-            try:
-                response = model.generate_content(
-                    prompt,
-                    generation_config={"response_mime_type": "application/json"}
+            # Create client with API key
+            client = genai.Client(api_key=api_key)
+            
+            # Generate content with JSON mode
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1
                 )
-            except TypeError:
-                # Older SDK versions do not accept generation_config kwarg
-                response = model.generate_content(prompt)
-            text = _extract_text_from_response(response)
-
-            if "```json" in text:
-                text = text.split("```json", 1)[1].split("```", 1)[0]
-            elif "```" in text:
-                # handle generic fenced code blocks
-                text = text.split("```", 1)[1].split("```", 1)[0]
-
+            )
+            
+            # Extract text from response
+            text = response.text.strip()
+            
             if not text:
-                raise ValueError("empty response")
-
+                raise ValueError("Empty response from model")
+            
+            # Clean up any markdown code blocks
+            if "```json" in text:
+                text = text.split("```json", 1)[1].split("```", 1)[0].strip()
+            elif "```" in text:
+                text = text.split("```", 1)[1].split("```", 1)[0].strip()
+            
+            # Parse JSON
             parsed = json.loads(text)
-            if isinstance(parsed, dict):
+            
+            if isinstance(parsed, dict) and any(k in parsed for k in ["title", "price", "availability"]):
+                print(f"✅ Successfully used model: {model_name}")
                 return parsed
+            else:
+                raise ValueError("Invalid JSON structure")
+                
         except Exception as exc:
             errors[model_name] = str(exc)
             continue
 
-    # If we reach here, log the collected errors for debugging.
+    # If all models failed, log errors
     if errors:
         formatted = "; ".join(f"{name}: {msg}" for name, msg in errors.items())
-        print(f"[Gemini inference error] all model attempts failed -> {formatted}")
+        print(f"[Gemini inference error] All models failed -> {formatted}")
+    
     return {}
